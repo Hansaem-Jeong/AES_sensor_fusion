@@ -105,17 +105,39 @@ double environmental_sensors[991];
 
 volatile int check_run;
 
+//#define FUSION_MEASURE
+
+#ifdef FUSION_MEASURE
+#include <sys/stat.h>
+#define MEASUREMENT_CNT 1000
+#define THRESHOLD 200
+int meas_object[MEASUREMENT_CNT];
+int meas_result[MEASUREMENT_CNT];
+double meas_cycletime[MEASUREMENT_CNT];
+double meas_exetime[MEASUREMENT_CNT];
+
+int meas_cnt;
+
+#define MEAS_PATH "./src/sensor_fusion/measure/"
+#define MEAS_FILE "measure.csv"
+#endif
+
 void *run_function(void *data)
 {
     ros::Publisher track_pub = *((ros::Publisher *)data);
     tracking_msg::Tracking tracking_m;
     tracking_msg::TrackingArray msg;
+    
+    static clock_t old_time = 0;
     while(1) {
         while(check_run != RUN_THREAD) { 
             std::this_thread::yield();
         }
-
+#ifdef FUSION_MEASURE
+        printf("=============== Start Processing #%d ===============\n", meas_cnt);
+#else        
         printf("=============== Start Processing ===============\n");
+#endif
         check_run = 0;
         clock_t start_run = clock();
         clock_t end_run = 0;
@@ -239,9 +261,53 @@ void *run_function(void *data)
 
 
         end_run = clock();
-        clock_t cycle_time = end_run - start_run;
-        printf(" - Cycle Time : %lf\n", (double)cycle_time/CLOCKS_PER_SEC);
+                
+#ifdef FUSION_MEASURE
+        meas_cnt += 1;
+        int tmp_cnt = meas_cnt - THRESHOLD;
+        clock_t this_time = clock();
+        clock_t cycle_time = this_time - old_time;
+        old_time = this_time;
+
+        printf("- Measure Count: %d\n", tmp_cnt);
+        if(tmp_cnt>=0&&tmp_cnt<=MEASUREMENT_CNT) {
+            meas_exetime[tmp_cnt] = (double)(end_run - start_run)/CLOCKS_PER_SEC;
+            meas_cycletime[tmp_cnt] = (double)(cycle_time)/CLOCKS_PER_SEC;
+        }
+        
+        if(tmp_cnt==MEASUREMENT_CNT) {
+            int exist = 0;
+            FILE *fp;
+            char file_name[100] = "";
+            
+            strcat(file_name, MEAS_PATH);
+            strcat(file_name, MEAS_FILE);
+    
+            fp = fopen(file_name, "w+");
+            if(fp==NULL) {
+                while(!exist) {
+                    int result;
+                    result = mkdir(MEAS_PATH, 0766);
+                    if(result==0) {
+                        exist = 1;
+                        fp=fopen(file_name, "w+");
+                    }
+                }
+            }
+            fprintf(fp, "%s,%s\n", "Exe", "Cycle");
+            for(int i =0;i<tmp_cnt;++i) {
+                fprintf(fp, "%lf,%lf\n", meas_exetime[i]*1000, meas_cycletime[i]*1000);
+            }
+            fclose(fp);
+            printf(" AES Measure , Complete\n");
+        }
+        printf("index: %d-th\n", meas_cnt);
+        printf(" -     Cycle Time : %lf\n", (double)cycle_time/CLOCKS_PER_SEC);
+#endif
+        clock_t exe_time = end_run - start_run;
+        printf(" - Execution Time : %lf\n", (double)exe_time/CLOCKS_PER_SEC);
         printf("================ End Processing ================\n\n\n");
+
     }
 }
 
